@@ -186,26 +186,9 @@ async def handle_change_language_response(update: Update, context: ContextTypes.
     input_text = update.message.text
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
 
-    # parse input using chatgpt
+    # prepare language code to language name mappings for chatgpt
     language_code_entries = [f'{x.name}: {x.lang_name}' for x in cloudlanguagetools.languages.Language]
     language_code_entries_list_str = '\n'.join(language_code_entries)
-
-    prompt = f"""
-    given the following language code and name combinations:
-{language_code_entries_list_str}
-, simply return the language code for the language  '{input_text}'.
-For example:
-input: English
-response: en
-input: cantonese
-response: yue
-input: mandarin
-response: zh_cn
-input: french
-response: fr
-input: canadian french
-response: fr_ca
-"""
 
     messages = [
             {"role": "system", "content": "You are an assistant which will give language codes when a user types in a language name. the list of language codes to language name mappings are as follows:\n" 
@@ -222,13 +205,11 @@ response: fr_ca
             {"role": "assistant", "content": "fr_ca"},
             {"role": "user", "content": input_text},
     ]
-    pprint.pprint(messages)
+    # pprint.pprint(messages)
     response = clt_manager.openai_full_query(messages)
-    pprint.pprint(response)
+    # pprint.pprint(response)
     language_code_str = response['choices'][0]['message']['content']
 
-    # logger.info(f'querying openai with the following prompt: {prompt}')
-    # language_code_str, tokens = clt_manager.openai_single_prompt(prompt)
     language = cloudlanguagetools.languages.Language[language_code_str]
 
     # store result, and notify user
