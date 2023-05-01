@@ -69,6 +69,9 @@ logging.basicConfig(
 
 TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 
+# conversation states
+INPUT_SENTENCE, CONFIRM_LANGUAGE, CHOOSE_LANGUAGE, PROCESS_SENTENCE = range(4)
+
 
 def get_default_transliteration(language):
     transliteration_candidates = [x for x in clt_language_data['transliteration_options'] if x['language_code'] == language.name]
@@ -117,50 +120,101 @@ def get_default_translation_service(from_language, to_language):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a bot, please talk to me!")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Please enter a sentence in your target language (language that you are learning)")
+    return INPUT_SENTENCE
 
 async def handle_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="you want to switch language")
 
-async def handle_sentence_with_language(context, chat_id, input_text, language):
+async def handle_process_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info('handle_process_sentence')
     # translate
-    await context.bot.send_chat_action(chat_id=chat_id, action=telegram.constants.ChatAction.TYPING )
+    input_text = context.user_data['input_text']
+    language = context.user_data['language']
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     translation_service = get_default_translation_service(language, cloudlanguagetools.languages.Language.en)
     translation = clt_manager.get_translation(input_text, translation_service['service'], translation_service['from_language_key'], translation_service['to_language_key'])
     # translation, tokens = clt_manager.openai_single_prompt(f'translate to English: {input_text}')
-    await context.bot.send_message(chat_id=chat_id, text=translation)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=translation)
 
     # transliterate
     # look for transliterations
-    await context.bot.send_chat_action(chat_id=chat_id, action=telegram.constants.ChatAction.TYPING )
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     transliteration_option = get_default_transliteration(language)
     transliteration = clt_manager.get_transliteration(input_text, transliteration_option['service'], transliteration_option['transliteration_key'])
-    await context.bot.send_message(chat_id=chat_id, text=transliteration)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=transliteration)
 
-async def handle_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+    return telegram.ext.ConversationHandler.END
 
+async def handle_input_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # detect language
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     input_text = update.message.text
     detected_language = clt_manager.detect_language([input_text])
     context.user_data['input_text'] = input_text
     context.user_data['language'] = detected_language
+
     output = f'looks like {detected_language.lang_name}, /language to change'
     await context.bot.send_message(chat_id=update.effective_chat.id, text=output)
 
-    await handle_sentence_with_language(context, update.effective_chat.id, input_text, detected_language)
+    reply_keyboard = [[f"OK, {detected_language.lang_name} is correct", "Change Language"]]
+    await update.message.reply_text(
+        f'This sentence looks like {detected_language.lang_name}, OK or change ?',
+        reply_markup = telegram.ReplyKeyboardMarkup(
+            reply_keyboard, one_time_keyboard=True, input_field_placeholder="OK or change?"
+        ),
+    )
+    return CONFIRM_LANGUAGE
+
+    # await handle_sentence_with_language(context, update.effective_chat.id, input_text, detected_language)
+
+async def handle_language_confirmed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return PROCESS_SENTENCE
+
+async def handle_language_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Please enter the language")
+    return telegram.ext.ConversationHandler.END
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await context.bot.send_message(chat_id=update.effective_chat.id, text='canceling conversation')
+    """Cancels and ends the conversation."""
+    user = update.message.from_user
+    logger.info("User %s canceled the conversation.", user.first_name)
+    await update.message.reply_text(
+        "Bye! I hope we can talk again some day.", reply_markup=telegram.ReplyKeyboardRemove()
+    )
+
+    return telegram.ext.ConversationHandler.END
 
 
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TOKEN).build()
     
-    sentence_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_sentence)
+    # sentence_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_sentence)
 
-    start_handler = CommandHandler('start', start)
-    language_handler = CommandHandler('language', handle_language)
-    application.add_handler(start_handler)
-    application.add_handler(language_handler)
-    application.add_handler(sentence_handler)
-    
+    conversation_handler = telegram.ext.ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            INPUT_SENTENCE: [MessageHandler(filters.TEXT, handle_input_text)],
+            CONFIRM_LANGUAGE: [
+                MessageHandler(filters.Regex("^OK.*$"), handle_process_sentence),
+                MessageHandler(filters.Regex("^Change Language$"), handle_language_change),
+            ],
+            PROCESS_SENTENCE: [MessageHandler(filters.TEXT, handle_process_sentence)],
+            # CHOOSE_LANGUAGE: [MessageHandler(filters.Regex("^Change Language$"), handle_change_language)],
+            # GENDER: [MessageHandler(filters.Regex("^(Boy|Girl|Other)$"), gender)],
+            # PHOTO: [MessageHandler(filters.PHOTO, photo), CommandHandler("skip", skip_photo)],
+            # LOCATION: [
+            #     MessageHandler(filters.LOCATION, location),
+            #     CommandHandler("skip", skip_location),
+            # ],
+            # BIO: [MessageHandler(filters.TEXT & ~filters.COMMAND, bio)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+
+    application.add_handler(conversation_handler)
     application.run_polling()
