@@ -67,8 +67,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-chat_states = {}
-
 TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 
 
@@ -141,15 +139,13 @@ async def handle_sentence_with_language(context, chat_id, input_text, language):
 
 async def handle_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    if chat_id not in chat_states:
-        chat_states[chat_id] = {}
 
     # detect language
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     input_text = update.message.text
     detected_language = clt_manager.detect_language([input_text])
-    chat_states[chat_id]['input_text'] = input_text
-    chat_states[chat_id]['language'] = detected_language
+    context.user_data['input_text'] = input_text
+    context.user_data['language'] = detected_language
     output = f'looks like {detected_language.lang_name}, /language to change'
     await context.bot.send_message(chat_id=update.effective_chat.id, text=output)
 
