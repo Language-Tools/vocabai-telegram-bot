@@ -70,7 +70,7 @@ logging.basicConfig(
 TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 
 # conversation states
-INPUT_SENTENCE, CONFIRM_LANGUAGE, CHOOSE_LANGUAGE, PROCESS_SENTENCE = range(4)
+USER_INPUT, CHANGE_LANGUAGE = range(2)
 
 
 def get_default_transliteration(language):
@@ -121,17 +121,16 @@ def get_default_translation_service(from_language, to_language):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Please enter a sentence in your target language (language that you are learning)")
-    return INPUT_SENTENCE
+    context.user_data.clear()
 
-async def handle_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="you want to switch language")
-
-async def handle_process_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info('handle_process_sentence')
-    # translate
+async def perform_sentence_transformations(update: Update, context: ContextTypes.DEFAULT_TYPE):
+ 
     input_text = context.user_data['input_text']
     language = context.user_data['language']
 
+
+
+    # translate
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     translation_service = get_default_translation_service(language, cloudlanguagetools.languages.Language.en)
     translation = clt_manager.get_translation(input_text, translation_service['service'], translation_service['from_language_key'], translation_service['to_language_key'])
@@ -147,74 +146,125 @@ async def handle_process_sentence(update: Update, context: ContextTypes.DEFAULT_
 
     return telegram.ext.ConversationHandler.END
 
-async def handle_input_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # detect language
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
+
     input_text = update.message.text
     detected_language = clt_manager.detect_language([input_text])
-    context.user_data['input_text'] = input_text
-    context.user_data['language'] = detected_language
+    # do we have input_text set already ?
+    if 'input_text' not in context.user_data or detected_language != cloudlanguagetools.languages.Language.en:
+        # this input can only be the target language sentence
+        previous_language = context.user_data.get('language', None)
+        context.user_data['input_text'] = input_text
+        context.user_data['language'] = detected_language
 
-    output = f'looks like {detected_language.lang_name}, /language to change'
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=output)
+        # notify the user about the detected language (first time we are encountering this language)
+        if previous_language != detected_language:
+            message = f"I'm assuming the sentence '{input_text}' is in {detected_language.lang_name}, /changelanguage to change"
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
-    reply_keyboard = [[f"OK, {detected_language.lang_name} is correct", "Change Language"]]
-    await update.message.reply_text(
-        f'This sentence looks like {detected_language.lang_name}, OK or change ?',
-        reply_markup = telegram.ReplyKeyboardMarkup(
-            reply_keyboard, one_time_keyboard=True, input_field_placeholder="OK or change?"
-        ),
-    )
-    return CONFIRM_LANGUAGE
+        await perform_sentence_transformations(update, context)
+    else:
+        # this is a question
+        pass
 
-    # await handle_sentence_with_language(context, update.effective_chat.id, input_text, detected_language)
+    # default is to go back to user input
+    return USER_INPUT
 
-async def handle_language_confirmed(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return PROCESS_SENTENCE
+async def handle_change_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
+    if 'input_text' not in context.user_data:
+        # user must enter a sentence first
+        await context.bot.send_message(chat_id=update.effective_chat.id, text='Please enter a sentence in the target language (language that you are learning) first.)')
+        return USER_INPUT
+    else:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text='What language is the sentence in ? Type it in.')
+        return CHANGE_LANGUAGE
 
-async def handle_language_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Please enter the language")
-    return telegram.ext.ConversationHandler.END
+async def handle_change_language_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    input_text = update.message.text
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
+
+    # parse input using chatgpt
+    language_code_entries = [f'{x.name}: {x.lang_name}' for x in cloudlanguagetools.languages.Language]
+    language_code_entries_list_str = '\n'.join(language_code_entries)
+
+    prompt = f"""
+    given the following language code and name combinations:
+{language_code_entries_list_str}
+, simply return the language code for the language  '{input_text}'.
+For example:
+input: English
+response: en
+input: cantonese
+response: yue
+input: mandarin
+response: zh_cn
+input: french
+response: fr
+input: canadian french
+response: fr_ca
+"""
+
+    messages = [
+            {"role": "system", "content": "You are an assistant which will give language codes when a user types in a language name. the list of language codes to language name mappings are as follows:\n" 
+                + language_code_entries_list_str},
+            {"role": "user", "content": "cantonese"},
+            {"role": "assistant", "content": "yue"},
+            {"role": "user", "content": "English"},
+            {"role": "assistant", "content": "en"},
+            {"role": "user", "content": "mandarin"},
+            {"role": "assistant", "content": "zh_cn"},
+            {"role": "user", "content": "French"},
+            {"role": "assistant", "content": "fr"},            
+            {"role": "user", "content": "canadian french"},
+            {"role": "assistant", "content": "fr_ca"},
+            {"role": "user", "content": input_text},
+    ]
+    pprint.pprint(messages)
+    response = clt_manager.openai_full_query(messages)
+    pprint.pprint(response)
+    language_code_str = response['choices'][0]['message']['content']
+
+    # logger.info(f'querying openai with the following prompt: {prompt}')
+    # language_code_str, tokens = clt_manager.openai_single_prompt(prompt)
+    language = cloudlanguagetools.languages.Language[language_code_str]
+
+    # store result, and notify user
+    sentence = context.user_data['input_text']
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Got it, the language of sentence '{sentence}' is {language.lang_name}")
+    context.user_data['language'] = language
+
+    # now, process sentence again
+    await perform_sentence_transformations(update, context)
+
+    # and go back to USER_INPUT loop
+    return USER_INPUT
+
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await context.bot.send_message(chat_id=update.effective_chat.id, text='canceling conversation')
-    """Cancels and ends the conversation."""
-    user = update.message.from_user
-    logger.info("User %s canceled the conversation.", user.first_name)
-    await update.message.reply_text(
-        "Bye! I hope we can talk again some day.", reply_markup=telegram.ReplyKeyboardRemove()
-    )
-
     return telegram.ext.ConversationHandler.END
-
 
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TOKEN).build()
     
-    # sentence_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_sentence)
+    start_handler = CommandHandler("start", start)
 
     conversation_handler = telegram.ext.ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[MessageHandler(filters.TEXT & (~filters.COMMAND), handle_user_input)],
         states={
-            INPUT_SENTENCE: [MessageHandler(filters.TEXT, handle_input_text)],
-            CONFIRM_LANGUAGE: [
-                MessageHandler(filters.Regex("^OK.*$"), handle_process_sentence),
-                MessageHandler(filters.Regex("^Change Language$"), handle_language_change),
+            USER_INPUT: [
+                MessageHandler(filters.TEXT & (~filters.COMMAND), handle_user_input),
+                CommandHandler("changelanguage", handle_change_language )
             ],
-            PROCESS_SENTENCE: [MessageHandler(filters.TEXT, handle_process_sentence)],
-            # CHOOSE_LANGUAGE: [MessageHandler(filters.Regex("^Change Language$"), handle_change_language)],
-            # GENDER: [MessageHandler(filters.Regex("^(Boy|Girl|Other)$"), gender)],
-            # PHOTO: [MessageHandler(filters.PHOTO, photo), CommandHandler("skip", skip_photo)],
-            # LOCATION: [
-            #     MessageHandler(filters.LOCATION, location),
-            #     CommandHandler("skip", skip_location),
-            # ],
-            # BIO: [MessageHandler(filters.TEXT & ~filters.COMMAND, bio)],
+            CHANGE_LANGUAGE: [MessageHandler(filters.TEXT & (~filters.COMMAND), handle_change_language_response)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+
     )
 
-
+    application.add_handler(start_handler)
     application.add_handler(conversation_handler)
     application.run_polling()
