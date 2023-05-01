@@ -166,8 +166,20 @@ async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await perform_sentence_transformations(update, context)
     else:
+        # do we have an input sentence ?
+        if 'input_text' not in context.user_data:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text='Please enter a sentence in the target language (language that you are learning) first.)')
+            return USER_INPUT            
         # this is a question
-        pass
+        input_sentence = context.user_data['input_text']
+        language = context.user_data['language']
+        messages = [
+                {"role": "system", "content": f"You are an helpful language learning assistant. Your role is to answer questions about the {language.lang_name} sentence '{input_sentence}'"},
+                {"role": "user", "content": input_text}
+        ]
+        response = clt_manager.openai_full_query(messages)
+        question_response = response['choices'][0]['message']['content']
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=question_response)
 
     # default is to go back to user input
     return USER_INPUT
