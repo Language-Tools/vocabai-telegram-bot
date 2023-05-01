@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # docs
 # https://github.com/python-telegram-bot/python-telegram-bot
+# https://docs.python-telegram-bot.org/en/stable/
 # https://github.com/python-telegram-bot/python-telegram-bot/wiki/Extensions---Your-first-Bot
 
 import telegram
@@ -66,6 +67,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 
+chat_states = {}
 
 TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 
@@ -119,6 +121,9 @@ def get_default_translation_service(from_language, to_language):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a bot, please talk to me!")
 
+async def handle_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="you want to switch language")
+
 async def handle_sentence_with_language(context, chat_id, input_text, language):
     # translate
     await context.bot.send_chat_action(chat_id=chat_id, action=telegram.constants.ChatAction.TYPING )
@@ -135,11 +140,17 @@ async def handle_sentence_with_language(context, chat_id, input_text, language):
     await context.bot.send_message(chat_id=chat_id, text=transliteration)
 
 async def handle_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id not in chat_states:
+        chat_states[chat_id] = {}
+
     # detect language
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     input_text = update.message.text
     detected_language = clt_manager.detect_language([input_text])
-    output = f'looks like {detected_language.lang_name}'
+    chat_states[chat_id]['input_text'] = input_text
+    chat_states[chat_id]['language'] = detected_language
+    output = f'looks like {detected_language.lang_name}, /language to change'
     await context.bot.send_message(chat_id=update.effective_chat.id, text=output)
 
     await handle_sentence_with_language(context, update.effective_chat.id, input_text, detected_language)
@@ -151,7 +162,9 @@ if __name__ == '__main__':
     sentence_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_sentence)
 
     start_handler = CommandHandler('start', start)
+    language_handler = CommandHandler('language', handle_language)
     application.add_handler(start_handler)
+    application.add_handler(language_handler)
     application.add_handler(sentence_handler)
     
     application.run_polling()
