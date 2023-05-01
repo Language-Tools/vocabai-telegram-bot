@@ -106,8 +106,8 @@ def get_default_translation_service(from_language, to_language):
         to_entry = [x for x in to_language_entries if x['service'] == service][0]
         translation_services[service] = {
             'service': service,
-            'from_language_key': from_entry['language_id'],
-            'to_language_key': to_entry['language_id'],
+            'source_language_id': from_entry['language_id'],
+            'target_language_id': to_entry['language_id'],
         }
     # prioritize DeepL service if available
     if cloudlanguagetools.constants.Service.DeepL.name in translation_services:
@@ -121,6 +121,18 @@ def get_default_translation_service(from_language, to_language):
     # by defaut, pick the first service
     return list(translation_services.values())[0]
 
+
+def get_default_tokenization_option(language):
+    tokenization_candidates = [x for x in clt_language_data['tokenization_options'] if x['language_code'] == language.name]
+    if language in [cloudlanguagetools.languages.Language.zh_cn,
+        cloudlanguagetools.languages.Language.zh_tw,
+        cloudlanguagetools.languages.Language.zh_tw,
+        cloudlanguagetools.languages.Language.zh_lit,
+        cloudlanguagetools.languages.Language.yue]:
+        # prefer jieba
+        tokenization_candidates = [x for x in tokenization_candidates if x['tokenization_key'] == {'model_name': 'zh_jieba'}]
+    pprint.pprint(tokenization_candidates)
+    return tokenization_candidates[0]
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -137,20 +149,32 @@ async def perform_sentence_transformations(update: Update, context: ContextTypes
     # await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
     # translate
+    # =========
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     translation_service = get_default_translation_service(language, cloudlanguagetools.languages.Language.en)
-    translation = clt_manager.get_translation(input_text, translation_service['service'], translation_service['from_language_key'], translation_service['to_language_key'])
+    translation = clt_manager.get_translation(input_text, translation_service['service'], translation_service['source_language_id'], translation_service['target_language_id'])
     context.user_data['translation'] = translation
     # translation, tokens = clt_manager.openai_single_prompt(f'translate to English: {input_text}')
     await context.bot.send_message(chat_id=update.effective_chat.id, text=translation, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
 
     # transliterate
+    # =============
     # look for transliterations
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     transliteration_option = get_default_transliteration(language)
     transliteration = clt_manager.get_transliteration(input_text, transliteration_option['service'], transliteration_option['transliteration_key'])
     context.user_data['transliteration'] = transliteration
     await context.bot.send_message(chat_id=update.effective_chat.id, text=transliteration, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
+
+    # breakdown
+    # =========
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
+    tokenization_option = get_default_tokenization_option(language)
+    breakdown = clt_manager.get_breakdown(input_text, tokenization_option, translation_service, transliteration_option)
+    pprint.pprint(breakdown)
+    breakdown_str_render = [f"{x['token']}: {x['transliteration']} - {x['translation']}" for x in breakdown]
+    breakdown_result = '\n'.join(breakdown_str_render)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=breakdown_result)
 
     # 
     question_language = NATIVE_LANGUAGE
