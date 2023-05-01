@@ -268,7 +268,8 @@ async def handle_change_language_response(update: Update, context: ContextTypes.
 
     # store result, and notify user
     sentence = context.user_data['input_text']
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Got it, the language of sentence '{sentence}' is {language.lang_name}")
+    message = f"Got it, the language of sentence '{sentence}' is {language.lang_name}. I'll assume everything not in {NATIVE_LANGUAGE.lang_name} is also {language.lang_name} (/start to reset)"
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
     context.user_data['override_language'] = language
     context.user_data['language'] = language
 
