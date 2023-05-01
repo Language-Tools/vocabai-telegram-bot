@@ -108,6 +108,9 @@ def get_default_translation_service(from_language, to_language):
     # otherwise, pick Azure
     if cloudlanguagetools.constants.Service.Azure.name in translation_services:
         return translation_services[cloudlanguagetools.constants.Service.Azure.name]
+    # if the translation_services dict is empty, throw an exception
+    if len(translation_services) == 0:
+        raise Exception('no common translation services found')
     # by defaut, pick the first service
     return list(translation_services.values())[0]
 
@@ -116,12 +119,12 @@ def get_default_translation_service(from_language, to_language):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a bot, please talk to me!")
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # detect language
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     input_text = update.message.text
     detected_language = clt_manager.detect_language([input_text])
-    output = f'looks like {detected_language.name}'
+    output = f'looks like {detected_language.lang_name}'
     await context.bot.send_message(chat_id=update.effective_chat.id, text=output)
     
     # translate
@@ -143,10 +146,10 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TOKEN).build()
     
-    echo_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), echo)
+    sentence_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_sentence)
 
     start_handler = CommandHandler('start', start)
     application.add_handler(start_handler)
-    application.add_handler(echo_handler)
+    application.add_handler(sentence_handler)
     
     application.run_polling()
