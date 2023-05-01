@@ -170,6 +170,10 @@ async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # this input can only be the target language sentence
         previous_language = context.user_data.get('language', None)
         context.user_data['input_text'] = input_text
+        
+        # did the user override the language ?
+        if 'override_language' in context.user_data:
+            detected_language = context.user_data['override_language']
         context.user_data['language'] = detected_language
 
         # notify the user about the detected language (first time we are encountering this language)
@@ -241,6 +245,7 @@ async def handle_change_language_response(update: Update, context: ContextTypes.
     # store result, and notify user
     sentence = context.user_data['input_text']
     await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Got it, the language of sentence '{sentence}' is {language.lang_name}")
+    context.user_data['override_language'] = language
     context.user_data['language'] = language
 
     # now, process sentence again
