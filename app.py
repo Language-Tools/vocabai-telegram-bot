@@ -119,6 +119,21 @@ def get_default_translation_service(from_language, to_language):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a bot, please talk to me!")
 
+async def handle_sentence_with_language(context, chat_id, input_text, language):
+    # translate
+    await context.bot.send_chat_action(chat_id=chat_id, action=telegram.constants.ChatAction.TYPING )
+    translation_service = get_default_translation_service(language, cloudlanguagetools.languages.Language.en)
+    translation = clt_manager.get_translation(input_text, translation_service['service'], translation_service['from_language_key'], translation_service['to_language_key'])
+    # translation, tokens = clt_manager.openai_single_prompt(f'translate to English: {input_text}')
+    await context.bot.send_message(chat_id=chat_id, text=translation)
+
+    # transliterate
+    # look for transliterations
+    await context.bot.send_chat_action(chat_id=chat_id, action=telegram.constants.ChatAction.TYPING )
+    transliteration_option = get_default_transliteration(language)
+    transliteration = clt_manager.get_transliteration(input_text, transliteration_option['service'], transliteration_option['transliteration_key'])
+    await context.bot.send_message(chat_id=chat_id, text=transliteration)
+
 async def handle_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # detect language
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
@@ -126,21 +141,8 @@ async def handle_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE):
     detected_language = clt_manager.detect_language([input_text])
     output = f'looks like {detected_language.lang_name}'
     await context.bot.send_message(chat_id=update.effective_chat.id, text=output)
-    
-    # translate
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
-    translation_service = get_default_translation_service(detected_language, cloudlanguagetools.languages.Language.en)
-    translation = clt_manager.get_translation(input_text, translation_service['service'], translation_service['from_language_key'], translation_service['to_language_key'])
-    # translation, tokens = clt_manager.openai_single_prompt(f'translate to English: {input_text}')
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=translation)
 
-    # transliterate
-    # look for transliterations
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
-    transliteration_option = get_default_transliteration(detected_language)
-    transliteration = clt_manager.get_transliteration(input_text, transliteration_option['service'], transliteration_option['transliteration_key'])
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=transliteration)
-
+    await handle_sentence_with_language(context, update.effective_chat.id, input_text, detected_language)
 
 
 if __name__ == '__main__':
