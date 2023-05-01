@@ -77,12 +77,40 @@ def get_default_transliteration(language):
         cloudlanguagetools.languages.Language.zh_tw,
         cloudlanguagetools.languages.Language.zh_lit,
         cloudlanguagetools.languages.Language.yue]:
-        pprint.pprint(transliteration_candidates)
+        # pprint.pprint(transliteration_candidates)
         transliteration_candidates = [x for x in transliteration_candidates 
             if x['service'] == cloudlanguagetools.constants.Service.MandarinCantonese.name 
             and x['transliteration_key']['spaces'] == False
             and x['transliteration_key']['tone_numbers'] == False]
     return transliteration_candidates[0]
+
+
+# pick the default translation option, if DeepL service is available, use it
+def get_default_translation_service(from_language, to_language):
+    from_language_entries = [x for x in clt_language_data['translation_options'] if x['language_code'] == from_language.name]
+    to_language_entries = [x for x in clt_language_data['translation_options'] if x['language_code'] == to_language.name]
+    # get the keys for 'service' which are common between from_language_entries and to_language_entries
+    from_service_keys = [x['service'] for x in from_language_entries]
+    to_service_keys = [x['service'] for x in to_language_entries]
+    common_service_keys = list(set(from_service_keys) & set(to_service_keys))
+    translation_services = {}
+    for service in common_service_keys:
+        from_entry = [x for x in from_language_entries if x['service'] == service][0]
+        to_entry = [x for x in to_language_entries if x['service'] == service][0]
+        translation_services[service] = {
+            'service': service,
+            'from_language_key': from_entry['language_id'],
+            'to_language_key': to_entry['language_id'],
+        }
+    # prioritize DeepL service if available
+    if cloudlanguagetools.constants.Service.DeepL.name in translation_services:
+        return translation_services[cloudlanguagetools.constants.Service.DeepL.name]
+    # otherwise, pick Azure
+    if cloudlanguagetools.constants.Service.Azure.name in translation_services:
+        return translation_services[cloudlanguagetools.constants.Service.Azure.name]
+    # by defaut, pick the first service
+    return list(translation_services.values())[0]
+
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -93,11 +121,14 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     input_text = update.message.text
     detected_language = clt_manager.detect_language([input_text])
-    output = f'[{input_text}] detected language is: {detected_language}'
+    output = f'looks like {detected_language.name}'
     await context.bot.send_message(chat_id=update.effective_chat.id, text=output)
+    
     # translate
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
-    translation, tokens = clt_manager.openai_single_prompt(f'translate to English: {input_text}')
+    translation_service = get_default_translation_service(detected_language, cloudlanguagetools.languages.Language.en)
+    translation = clt_manager.get_translation(input_text, translation_service['service'], translation_service['from_language_key'], translation_service['to_language_key'])
+    # translation, tokens = clt_manager.openai_single_prompt(f'translate to English: {input_text}')
     await context.bot.send_message(chat_id=update.effective_chat.id, text=translation)
 
     # transliterate
