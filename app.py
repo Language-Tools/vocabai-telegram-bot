@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 # https://github.com/python-telegram-bot/python-telegram-bot
 # https://docs.python-telegram-bot.org/en/stable/
 # https://github.com/python-telegram-bot/python-telegram-bot/wiki/Extensions---Your-first-Bot
+# bot api features:
+# https://core.telegram.org/bots/features#what-features-do-bots-have
 
 import telegram
 
@@ -68,6 +70,8 @@ logging.basicConfig(
 )
 
 TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
+
+NATIVE_LANGUAGE = cloudlanguagetools.languages.Language.en
 
 # conversation states
 USER_INPUT, CHANGE_LANGUAGE = range(2)
@@ -120,7 +124,8 @@ def get_default_translation_service(from_language, to_language):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Please enter a sentence in your target language (language that you are learning)")
+    await context.bot.send_message(chat_id=update.effective_chat.id, 
+        text="Please enter a sentence in your target language (language that you are learning)")
     context.user_data.clear()
 
 async def perform_sentence_transformations(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -128,23 +133,31 @@ async def perform_sentence_transformations(update: Update, context: ContextTypes
     input_text = context.user_data['input_text']
     language = context.user_data['language']
 
-
+    # message = f'here are the translation and transliteration for {input_text}:'
+    # await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
     # translate
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     translation_service = get_default_translation_service(language, cloudlanguagetools.languages.Language.en)
     translation = clt_manager.get_translation(input_text, translation_service['service'], translation_service['from_language_key'], translation_service['to_language_key'])
+    context.user_data['translation'] = translation
     # translation, tokens = clt_manager.openai_single_prompt(f'translate to English: {input_text}')
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=translation)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=translation, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
 
     # transliterate
     # look for transliterations
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     transliteration_option = get_default_transliteration(language)
     transliteration = clt_manager.get_transliteration(input_text, transliteration_option['service'], transliteration_option['transliteration_key'])
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=transliteration)
+    context.user_data['transliteration'] = transliteration
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=transliteration, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
 
-    return telegram.ext.ConversationHandler.END
+    # 
+    question_language = NATIVE_LANGUAGE
+    message = f'Questions about this sentence ? Ask in {question_language.lang_name}.' + \
+    f' Otherwise, write a new sentence in {language.lang_name}'
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
+
 
 async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # detect language
@@ -168,18 +181,19 @@ async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         # do we have an input sentence ?
         if 'input_text' not in context.user_data:
+            # we don't have a sentence to work on
             await context.bot.send_message(chat_id=update.effective_chat.id, text='Please enter a sentence in the target language (language that you are learning) first.)')
-            return USER_INPUT            
-        # this is a question
-        input_sentence = context.user_data['input_text']
-        language = context.user_data['language']
-        messages = [
-                {"role": "system", "content": f"You are an helpful language learning assistant. Your role is to answer questions about the {language.lang_name} sentence '{input_sentence}'"},
-                {"role": "user", "content": input_text}
-        ]
-        response = clt_manager.openai_full_query(messages)
-        question_response = response['choices'][0]['message']['content']
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=question_response)
+        else:
+            # this is a question about the existing sentence
+            input_sentence = context.user_data['input_text']
+            language = context.user_data['language']
+            messages = [
+                    {"role": "system", "content": f"You are an helpful language learning assistant. Your role is to answer questions about the {language.lang_name} sentence '{input_sentence}'"},
+                    {"role": "user", "content": input_text}
+            ]
+            response = clt_manager.openai_full_query(messages)
+            question_response = response['choices'][0]['message']['content']
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=question_response)
 
     # default is to go back to user input
     return USER_INPUT
