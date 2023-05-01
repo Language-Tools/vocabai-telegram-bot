@@ -155,7 +155,7 @@ async def perform_sentence_transformations(update: Update, context: ContextTypes
     translation = clt_manager.get_translation(input_text, translation_service['service'], translation_service['source_language_id'], translation_service['target_language_id'])
     context.user_data['translation'] = translation
     # translation, tokens = clt_manager.openai_single_prompt(f'translate to English: {input_text}')
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=translation, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=translation)
 
     # transliterate
     # =============
@@ -164,7 +164,7 @@ async def perform_sentence_transformations(update: Update, context: ContextTypes
     transliteration_option = get_default_transliteration(language)
     transliteration = clt_manager.get_transliteration(input_text, transliteration_option['service'], transliteration_option['transliteration_key'])
     context.user_data['transliteration'] = transliteration
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=transliteration, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=transliteration)
 
     # breakdown
     # =========
@@ -172,8 +172,17 @@ async def perform_sentence_transformations(update: Update, context: ContextTypes
     tokenization_option = get_default_tokenization_option(language)
     breakdown = clt_manager.get_breakdown(input_text, tokenization_option, translation_service, transliteration_option)
     pprint.pprint(breakdown)
-    breakdown_str_render = [f"{x['token']}: {x['transliteration']} - {x['translation']}" for x in breakdown]
-    breakdown_result = '\n'.join(breakdown_str_render)
+    result_lines = []
+    for entry in breakdown:
+        lemma = ''
+        if entry['lemma'].lower() != entry['token'].lower():
+            lemma = f" ({entry['lemma']})"
+        pos_description = ''
+        if 'pos_description' in entry:
+            pos_description = f" ({entry['pos_description']})"
+        result = f"{entry['token']}{lemma}: {entry.get('transliteration', '')} - {entry.get('translation', '')}{pos_description}"
+        result_lines.append(result)
+    breakdown_result = '\n'.join(result_lines)
     await context.bot.send_message(chat_id=update.effective_chat.id, text=breakdown_result)
 
     # 
