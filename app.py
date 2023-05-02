@@ -171,7 +171,7 @@ async def perform_sentence_transformations(update: Update, context: ContextTypes
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=telegram.constants.ChatAction.TYPING )
     tokenization_option = get_default_tokenization_option(language)
     breakdown = clt_manager.get_breakdown(input_text, tokenization_option, translation_service, transliteration_option)
-    pprint.pprint(breakdown)
+    # pprint.pprint(breakdown)
     result_lines = []
     for entry in breakdown:
         lemma = ''
